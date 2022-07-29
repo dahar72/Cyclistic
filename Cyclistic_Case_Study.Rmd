@@ -1,0 +1,348 @@
+---
+title: "Cyclistic Case Study"
+author: "David Harold"
+date: '2022-05-27'
+output: flexdashboard::flex_dashboard
+orientation: rows
+---
+
+Introduction
+================================================================================
+#### Introduction
+|             Cyclistic is a Chicago located, bike sharing company that is looking for some help with increasing their sales, in particular, their annual membership sales. Cyclistic has two forms of rentals, casual and member. A rental is considered casual when a customer walks up to any of the Cyclistic station and does a one time rental of a bike. A member rental on the other hand, is when a customer has purchased an annual membership and that member can rent a bike from any of their 692 stations as they please, for no additional charge. Although both types of purchases attract customers, it is believed that their annual memberships are Cyclistic's primary income source.
+|
+#### Business Question
+|             The primary question asked by Lily Moreno for this study is: *How do annual members and casual riders use Cyclistic bikes differently?*
+|
+#### Data
+|             Data has been provided from Cyclistic and can be reached [here](https://divvy-tripdata.s3.amazonaws.com/index.html). 
+| (Cyclistic is a fictitious company, but this data has been provided by a real company under [this](https://www.divvybikes.com/data-license-agreement) license).
+
+```{r Import libraries, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(tidyverse)
+library(geosphere)
+library(ggthemes)
+library(flexdashboard)
+```
+
+
+Preparation
+================================================================================
+#### Data Frame Creation
+
+|           We have been asked to use the previous 12 months for this case, so we will download the .zip files for the past year, combine into one .zip file, and load into R. Then we can create individual data frames for each of the months, and verify that each of the frames contains the same variables. 
+
+```{r Initialize data frames, echo=TRUE}
+setwd("/home/david/R/R_Directory/Cyclistic")
+apr_2022<-read_csv("4-2022.csv")
+mar_2022<-read_csv("3-2022.csv")
+feb_2022<-read_csv("2-2022.csv")
+jan_2022<-read_csv("1-2022.csv")
+dec_2021<-read_csv("12-2021.csv")
+nov_2021<-read_csv("11-2021.csv")
+oct_2021<-read_csv("10-2021.csv")
+sep_2021<-read_csv("9-2021.csv")
+aug_2021<-read_csv("8-2021.csv")
+jul_2021<-read_csv("7-2021.csv")
+jun_2021<-read_csv("6-2021.csv")
+may_2021<-read_csv("5-2021.csv")
+```
+
+This section shows how we can view and verify that all the tables are set up the same, and contain the same variables (would run this for every table).
+
+```{r Verifying the vairables within the tables, echo=FALSE}
+glimpse(apr_2022)
+```
+
+|           Since all the data frames contain the same variables we can create a 'total' data frame that contains the entirety of the trip data from the previous year.
+
+```{r Combine the data frames, echo=TRUE}
+df_list<- list(apr_2022, aug_2021, dec_2021, 
+               feb_2022, jan_2022, jul_2021, 
+               jun_2021, mar_2022, may_2021, 
+               nov_2021, oct_2021, sep_2021)
+total_df<-df_list %>% reduce(full_join)
+```
+
+|           After the new frame has been created, we can select the specific variables we will be using for this analysis, and modify the total data frame to reflect those.
+
+```{r Extract the needed variables, echo=TRUE}
+total_df<-select(total_df, rideable_type, 
+                 member_casual, started_at, 
+                 ended_at, start_lat, 
+                 start_lng, end_lat, 
+                 end_lng, ride_id)
+rm(apr_2022, aug_2021, dec_2021, 
+   feb_2022, jan_2022, jul_2021, 
+   jun_2021, mar_2022, may_2021, 
+   nov_2021, oct_2021, sep_2021, 
+   df_list)
+```
+
+#### New Variables for Analysis
+
+|           There are a few additions that can be made to the dataframe, that will make the analysis much easier in the long run. The first valuable variable to create would be the total time for each of the trips, so we can analyze what the typical times are for each trip type. For this we will need to create another column that will subtract the start time from the end time, in turn giving us a new column of trip_time. This will be given to us in seconds and this will read out at relatively high, hard to relate with numbers, so we will also adjust this column to show minutes per trip.
+
+```{r trip_time creation, echo=TRUE}
+ total_df<-total_df %>%
+    mutate(trip_time = (ended_at - started_at)) %>% 
+    mutate(trip_time = as.integer(trip_time)/60)
+  
+```
+
+|           Another potentially valuable variable that can be created from this data frame is the total distance. There isn't a way to get the actual distance the bike was used for, but we can instead look at the distance from the starting station to the ending station in a perfectly straight line, or as the crow flies. This would originally give use a value in meters, so we will again adjust the output to show distance in miles. This can also give values of zero if the starting and ending points were at the same station.
+
+```{r trip-distance creation, echo=TRUE}
+total_df<-total_df %>% 
+  mutate(trip_distance = distHaversine(cbind(start_lng, start_lat), cbind(end_lng,end_lat))) %>% 
+  mutate(trip_distance = trip_distance / 1609)
+```
+
+|           The third and final variable that can be added is the specific days that rides are happening on. As the data is currently set up, there is only the data and time for the start and end of each trip. To do better analysis it could be useful to extract the specific days of the week, so another column titled day_of_week has been created.
+
+```{r Day of week variable creation, echo=TRUE}
+total_df$day_of_the_week <- weekdays(as.Date(total_df$started_at))
+```
+
+Process
+================================================================================
+#### Duplicates
+|           Now that these new variables have been created, a check must be done that the data seems to be accurate. There is a chance that we have somehow duplicated our data, especially when we are combining multiple data sets, this would therefor throw off the analysis that is being done. We need to find these potential duplicates and get rid of them, we can make another column, check for the ride_id column for duplicates and delete any if they are present. As we can see, the sum returned zero, this means that there are no duplicates within the data.
+
+```{r Check for duplicates, echo=TRUE}
+total_df<-total_df %>% 
+  mutate(duplicated = duplicated(total_df$ride_id))
+a <- sum(total_df$duplicated)
+b <- "total number of duplicates:"
+cat(paste(b,a))
+```
+
+#### N/A Values
+|           Now that any potential duplicates have been removed, we can move on to missing data handling. For this we can simply check the data and see what is missing and decide how this is going to be handled. For this we can check the variables that will be used and get a sum of the n/a values for each of the variables.
+
+```{r Check for missing data, echo=TRUE}
+a<-"N/A values:"
+b<-" bike type"
+c<-"member/causal"
+d<-"trip time"
+e<-"trip distance"
+f<-"weekdays"
+z<-"\n"
+g<-sum(is.na(total_df$rideable_type))
+h<-sum(is.na(total_df$member_casual))
+i<-sum(is.na(total_df$trip_time))
+j<-sum(is.na(total_df$trip_distance))
+k<-sum(is.na(total_df$day_of_the_week))
+cat(paste(b,a,g,z,c,a,h,z,d,a,i,z,e,a,j,z,f,a,k))
+```
+
+|           As we can see above, there is 4766 missing values for the trip distance variable. Since there is still valuable data from the other variables for these data points, we won't delete them entirely, but rather make note that we are aware of this when we analyze this variable, and do all analysis with this variable by not adding in the n/a values.
+
+#### Variable Summaries
+|           Now we can really start to explore the data and make sure that what we are seeing sounds correct, and that the data we have  actually makes sense. Summarizing the data and checking for major outliers is a great option here, as well as checking for negative numbers within the variables trip_time and trip_distance as time and distance can't be negative. We can also go ahead and check the day_of_the_week variable to make sure there are only values that are specific days of the week.
+
+Here is the summary of trip_time and trip_distance variables:
+```{r Summarize distance and time variables, echo=TRUE}
+summary(total_df$trip_time)
+summary(total_df$trip_distance)
+```
+|           As we can see there are some data points that seem a little strange as we shouldn't be seeing negative numbers in the time variable, so again it will be noted and excluded when analysis is done. There is also a max value of 55,944 minutes, or 932 hours. When making visualizations numbers that are this fair out of the range will be excluded as the disrupt the graph and can potentially be an error or are at least very uncommon. The distance variable looks a bit better as there are no negative variables, but there is again an outlier that will need to be excluded, 740 miles is not common and can be the result of an error that was made. We can see from the quartiles that have been made that these outliers are very far from the actual data that is being represented. To account for these outliers in the visualizations the using xlim function can be used.
+
+#### Charting for Validation
+
+|           A simple yet effective way to validate the day_of_the_week variable is to create a simple bar chart. This shows only the seven days of the week, and with the weekend days getting a slight uptick in rides, this looks correct meaning the day_of_the_week variable is validated. If there were unexpected values within this variable, they would be present on the graph and we would need to make adjustments.
+
+```{r Day of the week validation, echo=TRUE,fig.align='center'}
+#Day of the week validation chart
+weekday<- c("Monday", "Tuesday", "Wednesday", "Thursday","Friday","Saturday","Sunday")
+total_df %>% 
+ggplot(aes(x = factor(day_of_the_week, weekday), fill = day_of_the_week))+
+  geom_bar()+
+  labs(title = "Days of the Week Count",
+       fill = "Weekdays",
+       )+
+  theme_fivethirtyeight()+
+  scale_fill_brewer(palette = 'Set3')+
+  theme(legend.position = 'none')
+```
+
+|           The final variable to validate is the rideable_type variable and this will again be done with a bar chart. This will make sure this variable contains only the three bike types that Cyclistic rents; Classic, Docked, and Electric.
+
+```{r Bike type validation, echo=TRUE,fig.align='center'}
+#Bike Type validation chart
+
+#label
+label<- expression('Classic', 'Docked', 'Electric')
+#histogram
+ggplot(data = total_df)+
+  geom_bar(mapping = aes(x = rideable_type, fill = rideable_type))+
+  labs(title= "Bike Type Count",
+       x = "Bike Type",
+       fill = "Bike Type")+
+  theme_fivethirtyeight()+
+  scale_fill_manual(labels = c(expression("Classic"),
+                                 expression("Docked"),
+                                 expression("Electric")),
+                    values = c('#8876ea', '#93ea76', '#eab676'))+
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank())
+```
+
+Analysis
+===========================================
+#### Initial Analysis
+
+|           Since the data is ready for analysis, we can now dive into the data and see what it is really presenting. First, we need to go back to the main business question that was asked and base the analysis strictly off this question. 
+| *How do annual members and casual riders use Cyclistic bikes differently?*
+| To answer this question we can start by separating the members data vs. the casual data for each of the variables we are trying to analyze, and compare the values against each other.
+
+```{r Trip Distance Histogram, echo=TRUE,fig.align='center'}
+#Trip Distance Histogram
+
+#Facet Label Creation
+member_casual.labs <- c("Member", "Casual")
+names(member_casual.labs)<- c("member", "casual")
+
+#Histogram
+ggplot(data = total_df) +
+  geom_histogram(aes(x=trip_distance, fill = rideable_type),bins = 20, na.rm=TRUE)+
+  xlim(0, 8)+
+  facet_wrap(~member_casual,
+             labeller = labeller(member_casual = member_casual.labs))+
+  labs(title = "Trip Distance",
+       subtitle = "Trip distances for the Casual and Member type customers with bike types", 
+       x = "Trip Distance (miles)", 
+       fill = "Bike Type")+
+  theme_fivethirtyeight()+
+  scale_fill_manual(labels = c(expression("Classic"),
+                                 expression("Docked"),
+                                 expression("Electric")),
+                    values = c('#8876ea', '#93ea76', '#eab676'))+
+  theme(axis.title = element_text(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank())
+```
+
+```{r Trip Time Histogram, echo=TRUE,fig.align='center'}
+#Trip Time Histogram
+
+#Facet Label Creation
+member_casual.labs <- c("Member", "Casual")
+names(member_casual.labs)<- c("member", "casual")
+
+#Histogram
+ggplot(data = total_df)+
+  geom_histogram(aes(x=trip_time, fill = rideable_type),bins = 20, na.rm = TRUE) + 
+  xlim(0,100)+
+  facet_wrap(~member_casual,
+             labeller = labeller(member_casual = member_casual.labs))+
+  labs(title= "Trip Time",
+       subtitle = "Trip times for the Casual and Member type customers with bike types",
+       x = "Trip Time (minutes)",
+       fill = "Bike Type")+
+  theme_fivethirtyeight()+
+  theme(axis.title = element_text(),
+        axis.text.y = element_blank(),
+        axis.title.y = element_blank())+
+  scale_fill_manual(labels = c(expression("Classic"),
+                                 expression("Docked"),
+                                 expression("Electric")),
+                    values = c('#8876ea', '#93ea76', '#eab676'))
+```
+
+```{r Weekday Trip Count, echo=TRUE, fig.align='center'}
+#Weekday Trip Count Bar Chart
+
+#Facet Label Creation
+member_casual.labs <- c("Member", "Casual")
+names(member_casual.labs)<- c("member", "casual")
+
+#Bar Chart
+weekday<- c("Monday", "Tuesday", "Wednesday", "Thursday","Friday","Saturday","Sunday")
+ggplot(data=total_df)+
+  geom_bar(mapping=aes(x=factor(day_of_the_week, weekday), 
+                       fill = day_of_the_week))+
+  labs(title = "Weekday Trips",
+       x = "Weekday")+
+  facet_wrap(~member_casual,
+             labeller = labeller(member_casual = member_casual.labs))+
+  theme_fivethirtyeight()+
+  scale_fill_brewer(palette = 'Set3')+
+  theme(axis.title.y = element_blank(),
+        legend.position = 'none',
+        axis.text.x=element_text(angle = 90, vjust = .5))
+```
+
+#### Deeper Analysis
+
+|           From these first three charts we can see that members tend to go shorter distances, take less time per trip, and weekdays tend to be their favorite days. Casual customers on the other hand tend to go further distances, take longer per trip, and prefer weekend days. Next, we can dive deeper into the difference in trip volume between the member and casual customers with a bar chart comparing total trips for each specific day.
+|           The first graph shows the total count of trips that were made by each type of customer, on each specific day of the week. This specific chart shows clearly that the member type customer trips are common on days Monday - Friday, while the casual type customer trips are more common on Saturday and Sunday.
+
+```{r trip total / day, echo=TRUE, fig.align='center'}
+#Trip Totals per Day
+total_df %>% 
+ggplot(aes(x = member_casual, fill = member_casual))+
+  geom_bar()+
+  facet_grid(~day_of_the_week)+
+  labs(title = "Trip Totals per Day",
+       subtitle = "Casual/Member trip total for each day of the week",
+       fill = "",
+       y = "Total Trips per Day")+
+  theme(axis.text = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks = element_blank())
+```
+
+|           The second deep dive graph shows the trip time summaries for each day of the week, and has the data also split by the member and casual customer types as well. This chart shows that the average times for the member's trips stay about the same for everyday of the week, and are considerably shorter than the casual customer's trip times. The casual customer's trip are also longer on the weekends, with the times taper up on Friday and back down on Monday, where they reach their lowest times Tuesday though Thursday.
+```{r Casual/Member trip times, echo=TRUE, fig.align='center'}
+#Trip Time Summary per Day
+total_df %>% 
+ggplot(aes(x = member_casual,
+           y = trip_time,
+           fill = member_casual))+
+  geom_boxplot()+
+  coord_cartesian(ylim=c(0,60))+
+  facet_grid(~day_of_the_week)+
+  labs(title = "Trip Time Summary per Day",
+       subtitle = "Trip Times for Casual/Member for each day of the week",
+       y = "Trip Time (minutes)",
+       fill = "")+
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.ticks = element_blank())
+```
+
+|           This third and final visual show the differences between the member and casual customer's preferences on bike type. It is immediately apparent that the member prefers the Classic type, but will also choose the Electric Bike. The Casual customers are fairly evenly split between the Classic and Electric, but will occasionally choose the Docked bike as well.
+```{r Bike type prefences / customer type, echo=TRUE, fig.align='center'}
+#Bike Type Preference
+total_df %>% 
+ggplot(aes(x = rideable_type,
+           fill = member_casual))+
+  geom_bar()+
+  facet_grid(~member_casual,
+             labeller = labeller(member_casual = member_casual.labs))+
+  labs(title = "Bike Type Preference",
+       fill = "")+
+  theme(axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        axis.text.x=element_text(angle = 90, vjust = .5))+
+  scale_x_discrete(labels = c("Classic", "Docked", "Electric"))
+```
+
+Summary
+==========================================================================
+
+### Summary
+|         The initial question that was presented, was to simply analyze the differences between casual and member customers, and their bike rental preferences. The data was prepared by gathering all the data that could be useful, combining data into one data frame, and then creating extra variables for totals that were accumulation of their respective initial variables that made analysis much easier in the long run. Processing of the data followed, which entailed cleaning and validated the data that had been gathered, by searching for duplicates and missing values. Then the structures of the data itself needed to be checked to make sure analysis could follow. Once the data was prepared, cleaned and validated, the Analysis step could begin. For this we need to first analyze the differences in the variables between members and casual customers. After a base understanding of the data was achieved, a deeper dive into the data could happen, the final complex charts could be made to show the primary differences between the members and casual customers.
+
+|           *How do annual members and casual riders use Cyclistic bikes differently?* 
+
+| Based on the data that has been presented here, there are a few different things we can see.
+
+|   -Member trips are more common on weekdays, Casual trips are more common on week days
+
+|   -Casual trips last significantly longer than Member trips
+
+|   -Casual customers have a more spread out taste in bike types, even using the docked bikes, whereas members only use classic and electric
